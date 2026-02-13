@@ -1,20 +1,32 @@
-# Use an official Python runtime as a parent image
-FROM python:3.13-slim
+# Use multi-stage build for smaller image
+FROM python:3.13-slim as builder
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
+# Copy and install dependencies
 COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Final stage
+FROM python:3.13-slim
 
-# Copy the rest of the application code
+WORKDIR /app
+
+# Copy dependencies from builder
+COPY --from=builder /root/.local /root/.local
+
+# Copy application code
 COPY . .
 
-# Make port 8000 available to the world outside this container
-EXPOSE 8000
+# Make sure scripts are in PATH
+ENV PATH=/root/.local/bin:$PATH
 
-# Run the application using uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Cloud Run injects PORT env variable, default to 8080
+ENV PORT=8080
+
+# Expose the port
+EXPOSE 8080
+
+# Run the application
+# Use $PORT to read from environment variable
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}

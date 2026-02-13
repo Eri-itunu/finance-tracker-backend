@@ -44,6 +44,9 @@ async def root():
         "version": "1.0.0"
     }
 
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
 
 # Error response helper
 def error_response(message: str, status_code: int, details: Any = None):
