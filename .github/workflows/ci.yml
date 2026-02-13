@@ -9,7 +9,10 @@ on:
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   SERVICE_NAME: fintrack-api
-  REGION: us-central1
+  REGION: europe-west2
+  AR_REGION: europe-west2
+  REPOSITORY: fintrackrepo
+  IMAGE_NAME: fintrack-api
 
 jobs:
   test:
@@ -74,7 +77,6 @@ jobs:
   build-and-deploy:
     needs: test
     runs-on: ubuntu-latest
-    # Only deploy on push to main (not on PRs)
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
     steps:
@@ -88,33 +90,35 @@ jobs:
 
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    - name: Configure Docker for GCR
+    - name: Configure Docker for Artifact Registry
       run: |
-        gcloud auth configure-docker
+        gcloud auth configure-docker ${{ env.AR_REGION }}-docker.pkg.dev
 
     - name: Build Docker image
       run: |
-        docker build -t gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA \
-                     -t gcr.io/$PROJECT_ID/$SERVICE_NAME:latest .
+        docker build -t ${{ env.AR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+                     -t ${{ env.AR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest .
 
-    - name: Push to Google Container Registry
+    - name: Push to Artifact Registry
       run: |
-        docker push gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA
-        docker push gcr.io/$PROJECT_ID/$SERVICE_NAME:latest
+        docker push ${{ env.AR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        docker push ${{ env.AR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
 
     - name: Deploy to Cloud Run
       run: |
-        gcloud run deploy $SERVICE_NAME \
-          --image gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA \
+        gcloud run deploy ${{ env.SERVICE_NAME }} \
+          --image ${{ env.AR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
           --platform managed \
-          --region $REGION \
+          --region ${{ env.REGION }} \
           --allow-unauthenticated \
           --port 8080 \
           --memory 512Mi \
           --cpu 1 \
           --timeout 300 \
-          --max-instances 2 \
+          --max-instances 10 \
           --min-instances 0 \
           --set-env-vars "DATABASE_URL=${{ secrets.DATABASE_URL }}" \
           --set-env-vars "SECRET_KEY=${{ secrets.SECRET_KEY }}" \
@@ -125,39 +129,38 @@ jobs:
     - name: Get Service URL
       id: deploy
       run: |
-        SERVICE_URL=$(gcloud run services describe $SERVICE_NAME \
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
           --platform managed \
-          --region $REGION \
+          --region ${{ env.REGION }} \
           --format 'value(status.url)')
         echo "Service URL: $SERVICE_URL"
         echo "url=$SERVICE_URL" >> $GITHUB_OUTPUT
 
     - name: Run Smoke Test
       run: |
-        echo "Waiting for service to be ready..."
-        sleep 15
+        echo "⏳ Waiting for service to be ready..."
+        sleep 20
         
-        echo "Testing health endpoint..."
+        echo "🔍 Testing health endpoint..."
         RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" ${{ steps.deploy.outputs.url }}/health)
         
         if [ $RESPONSE -eq 200 ]; then
           echo "✅ Health check passed!"
+          echo "🚀 Deployment successful!"
+          echo "📍 Service is live at: ${{ steps.deploy.outputs.url }}"
         else
           echo "❌ Health check failed with status code: $RESPONSE"
+          echo "📋 Checking logs..."
+          gcloud run services logs read ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --limit 50
           exit 1
         fi
-        
-        echo "🚀 Deployment successful!"
-        echo "Service is live at: ${{ steps.deploy.outputs.url }}"
 
-    - name: Comment PR with deployment URL
-      if: github.event_name == 'pull_request'
-      uses: actions/github-script@v6
-      with:
-        script: |
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: '🚀 Deployment successful!\n\nService URL: ${{ steps.deploy.outputs.url }}'
-          })
+    - name: Output deployment info
+      run: |
+        echo "════════════════════════════════════════"
+        echo "🎉 Deployment Complete!"
+        echo "════════════════════════════════════════"
+        echo "📍 Service URL: ${{ steps.deploy.outputs.url }}"
+        echo "📦 Image: ${{ env.AR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+        echo "🌍 Region: ${{ env.REGION }}"
+        echo "════════════════════════════════════════"
