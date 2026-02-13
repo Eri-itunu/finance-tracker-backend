@@ -1,0 +1,25 @@
+# Version control
+.git
+.gitignore
+
+# Python compilation
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Dependencies
+venv/
+env/
+.env
+
+# MacOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Other
+alembic.ini
+sql_app.db
